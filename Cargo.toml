@@ -20,7 +20,7 @@ arrow-json = "54"
 async-trait = "0.1.83"
 datafusion = "45.0.0"
 datafusion-federation = { version = "0.3.6" }
-datafusion-substrait = "45.0.0"
+datafusion-substrait = "46.0.0"
 futures = "0.3.31"
 tokio = { version = "1.41", features = ["full"] }
 tonic = { version = "0.12", features = [
