@@ -23,7 +23,7 @@ datafusion-federation = { version = "0.3.6" }
 datafusion-substrait = "45.0.0"
 futures = "0.3.31"
 tokio = { version = "1.41", features = ["full"] }
-tonic = { version = "0.12", features = [
+tonic = { version = "0.13", features = [
     "tls",
     "transport",
     "codegen",
