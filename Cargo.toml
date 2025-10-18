@@ -15,7 +15,7 @@ repository = "https://github.com/datafusion-contrib/datafusion-flight-sql-server
 
 [workspace.dependencies]
 arrow = "55"
-arrow-flight = { version = "55", features = ["flight-sql-experimental"] }
+arrow-flight = { version = "56", features = ["flight-sql"] }
 arrow-json = "55"
 async-trait = "0.1.88"
 datafusion = "49.0.0"
