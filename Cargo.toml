@@ -14,18 +14,13 @@ readme = "README.md"
 repository = "https://github.com/datafusion-contrib/datafusion-flight-sql-server"
 
 [workspace.dependencies]
-arrow = "55"
+arrow = "56"
 arrow-flight = { version = "56", features = ["flight-sql"] }
-arrow-json = "55"
+arrow-json = "56"
 async-trait = "0.1.88"
-datafusion = "49.0.0"
-datafusion-federation = { version = "0.4.7" }
-datafusion-substrait = "49.0.0"
+datafusion = "50"
+datafusion-federation = { version = "0.4.10" }
+datafusion-substrait = "50"
 futures = "0.3.31"
 tokio = { version = "1.47", features = ["full"] }
-tonic = { version = "0.12", features = [
-    "transport",
-    "codegen",
-    "tls",
-    "prost",
-] }
+tonic = { version = "0.13", features = ["transport", "codegen", "prost"] }
