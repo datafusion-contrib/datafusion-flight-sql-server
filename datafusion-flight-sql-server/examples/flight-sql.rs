@@ -19,8 +19,11 @@ use tonic::transport::Endpoint;
 async fn main() -> Result<()> {
     let dsn: String = "0.0.0.0:50051".to_string();
     let remote_ctx = SessionContext::new();
+
+    let csv_path = format!("{}/examples/test.csv", env!("CARGO_MANIFEST_DIR"));
+
     remote_ctx
-        .register_csv("test", "./examples/test.csv", CsvReadOptions::new())
+        .register_csv("test", &csv_path, CsvReadOptions::new())
         .await?;
 
     // Remote context
