@@ -1,15 +1,5 @@
 use std::{collections::BTreeMap, pin::Pin, sync::Arc};
 
-use arrow::{
-    array::{ArrayRef, RecordBatch, StringArray},
-    compute::concat_batches,
-    datatypes::{DataType, Field, SchemaBuilder, SchemaRef},
-    error::ArrowError,
-    ipc::{
-        reader::StreamReader,
-        writer::{IpcWriteOptions, StreamWriter},
-    },
-};
 use arrow_flight::{
     decode::{DecodedPayload, FlightDataDecoder},
     sql::{
@@ -34,6 +24,16 @@ use arrow_flight::{
     flight_service_server::{FlightService, FlightServiceServer},
     Action, FlightDescriptor, FlightEndpoint, FlightInfo, HandshakeRequest, HandshakeResponse,
     IpcMessage, SchemaAsIpc, Ticket,
+};
+use datafusion::arrow::{
+    array::{ArrayRef, RecordBatch, StringArray},
+    compute::concat_batches,
+    datatypes::{DataType, Field, SchemaBuilder, SchemaRef},
+    error::ArrowError,
+    ipc::{
+        reader::StreamReader,
+        writer::{IpcWriteOptions, StreamWriter},
+    },
 };
 use datafusion::{
     common::{arrow::datatypes::Schema, ParamValues},
@@ -1051,7 +1051,7 @@ fn get_schema_for_plan(logical_plan: &LogicalPlan, with_metadata: bool) -> Schem
             df_schema.as_ref().metadata().clone(),
         ))
     } else {
-        Arc::new(Schema::from(logical_plan.schema().as_ref()))
+        Arc::new(logical_plan.schema().as_arrow().clone())
     };
 
     // Use an empty FlightDataEncoder to determine the schema of the encoded flight data.
@@ -1126,9 +1126,7 @@ async fn decode_schema(decoder: &mut FlightDataDecoder) -> Result<SchemaRef, Sta
 }
 
 // Decode parameter ipc stream as ParamValues
-fn decode_param_values(
-    parameters: Option<&[u8]>,
-) -> Result<Option<ParamValues>, arrow::error::ArrowError> {
+fn decode_param_values(parameters: Option<&[u8]>) -> Result<Option<ParamValues>, ArrowError> {
     parameters
         .map(|parameters| {
             let decoder = StreamReader::try_new(parameters, None)?;

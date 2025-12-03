@@ -17,18 +17,17 @@ protoc = ["datafusion-substrait/protoc"]
 
 [dependencies]
 arrow-flight.workspace = true
-arrow.workspace = true
 datafusion-federation = { workspace = true, features = ["sql"] }
 datafusion-substrait.workspace = true
 datafusion.workspace = true
 futures.workspace = true
 log = "0.4"
 once_cell = "1.21"
-prost = "0.13"
+prost.workspace = true
 tonic.workspace = true
 async-trait.workspace = true
-tonic-async-interceptor = "0.13"
 
 [dev-dependencies]
 tokio.workspace = true
 datafusion-flight-sql-table-provider = { path = "../datafusion-flight-sql-table-provider" }
+tonic-async-interceptor = "0.14"
