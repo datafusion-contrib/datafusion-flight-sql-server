@@ -26,6 +26,8 @@ once_cell = "1.21"
 prost.workspace = true
 tonic.workspace = true
 async-trait.workspace = true
+tokio-stream = "0.1.17"
+tokio = { version = "1.47", features = ["net"], default-features = false }
 
 [dev-dependencies]
 tokio.workspace = true

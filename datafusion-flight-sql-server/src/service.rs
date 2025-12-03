@@ -115,6 +115,21 @@ impl FlightSqlService {
         Ok(Server::builder().add_service(svc).serve(addr).await?)
     }
 
+    pub async fn serve_with_listener(
+        self,
+        listener: std::net::TcpListener,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("Listening on {}", listener.local_addr()?);
+
+        let svc = FlightServiceServer::new(self);
+        let listener = tokio::net::TcpListener::from_std(listener)?;
+
+        Ok(Server::builder()
+            .add_service(svc)
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .await?)
+    }
+
     async fn new_context<T>(
         &self,
         request: Request<T>,
