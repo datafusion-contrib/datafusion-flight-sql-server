@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use arrow::{
+use arrow_flight::sql::client::FlightSqlServiceClient;
+use datafusion::arrow::{
     array::{Int32Array, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
 };
-use arrow_flight::sql::client::FlightSqlServiceClient;
 use datafusion::{
     datasource::MemTable,
     execution::context::{SessionContext, SessionState},

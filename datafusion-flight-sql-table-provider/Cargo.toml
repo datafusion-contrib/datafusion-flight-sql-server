@@ -7,7 +7,6 @@ readme.workspace = true
 
 [dependencies]
 arrow-flight.workspace = true
-arrow.workspace = true
 async-trait.workspace = true
 datafusion-federation = { workspace = true, features = ["sql"] }
 datafusion.workspace = true

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use arrow::{datatypes::SchemaRef, error::ArrowError};
 use arrow_flight::sql::client::FlightSqlServiceClient;
 use async_trait::async_trait;
+use datafusion::arrow::{datatypes::SchemaRef, error::ArrowError};
 use datafusion::{
     error::{DataFusionError, Result},
     physical_plan::{stream::RecordBatchStreamAdapter, SendableRecordBatchStream},
