@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.14](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.13...v0.4.14) - 2025-12-19
+
+### Other
+
+- Merge pull request #38 from cloneyate/main
+- add method serve_with_listener
+- update dependencies and use re-exported arrow crate from datafusion
+
 ## [0.4.13](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.12...v0.4.13) - 2025-10-28
 
 ### Other
