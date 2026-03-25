@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.16](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.15...v0.4.16) - 2026-03-25
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.4.15](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.14...v0.4.15) - 2026-01-14
 
 ### Other
