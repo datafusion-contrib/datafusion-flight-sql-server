@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use arrow_flight::sql::client::FlightSqlServiceClient;
+use arrow_flight::{error::FlightError, sql::client::FlightSqlServiceClient};
 use async_trait::async_trait;
 use datafusion::arrow::{datatypes::SchemaRef, error::ArrowError};
 use datafusion::{
     error::{DataFusionError, Result},
-    physical_plan::{stream::RecordBatchStreamAdapter, SendableRecordBatchStream},
+    physical_plan::{stream::RecordBatchStreamAdapter, PhysicalExpr, SendableRecordBatchStream},
     sql::unparser::dialect::{DefaultDialect, Dialect},
 };
 use datafusion_federation::sql::SQLExecutor;
@@ -38,14 +38,14 @@ async fn make_flight_sql_stream(
     let flight_info = client
         .execute(sql.to_string(), None)
         .await
-        .map_err(arrow_error_to_df)?;
+        .map_err(flight_error_to_df)?;
 
     let mut flight_data_streams = Vec::with_capacity(flight_info.endpoint.len());
     for endpoint in flight_info.endpoint {
         let ticket = endpoint.ticket.ok_or(DataFusionError::Execution(
             "FlightEndpoint missing ticket!".to_string(),
         ))?;
-        let flight_data = client.do_get(ticket).await?;
+        let flight_data = client.do_get(ticket).await.map_err(flight_error_to_df)?;
         flight_data_streams.push(flight_data);
     }
 
@@ -66,7 +66,12 @@ impl SQLExecutor for FlightSQLExecutor {
     fn compute_context(&self) -> Option<String> {
         Some(self.context.clone())
     }
-    fn execute(&self, sql: &str, schema: SchemaRef) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        sql: &str,
+        schema: SchemaRef,
+        _filters: &[Arc<dyn PhysicalExpr>],
+    ) -> Result<SendableRecordBatchStream> {
         let future_stream =
             make_flight_sql_stream(sql.to_string(), self.client.clone(), Arc::clone(&schema));
         let stream = futures::stream::once(future_stream).try_flatten();
@@ -90,7 +95,7 @@ impl SQLExecutor for FlightSQLExecutor {
             .clone()
             .execute(sql, None)
             .await
-            .map_err(arrow_error_to_df)?;
+            .map_err(flight_error_to_df)?;
         let schema = flight_info.try_decode_schema().map_err(arrow_error_to_df)?;
         Ok(Arc::new(schema))
     }
@@ -98,6 +103,10 @@ impl SQLExecutor for FlightSQLExecutor {
     fn dialect(&self) -> Arc<dyn Dialect> {
         Arc::new(DefaultDialect {})
     }
+}
+
+fn flight_error_to_df(err: FlightError) -> DataFusionError {
+    DataFusionError::External(format!("flight error: {err:?}").into())
 }
 
 fn arrow_error_to_df(err: ArrowError) -> DataFusionError {
