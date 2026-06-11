@@ -326,3 +326,92 @@ async fn test_query_with_join() {
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 4, "Should have 4 rows from join");
 }
+
+#[tokio::test]
+async fn test_do_get_schema_matches_advertised_flight_info_schema() {
+    use datafusion::parquet::arrow::ArrowWriter;
+    use datafusion::prelude::ParquetReadOptions;
+
+    // Aggregates over statistics-backed sources (e.g. Parquet) are a case
+    // where the logical plan schema (advertised in FlightInfo) and the
+    // physical stream schema disagree on field nullability: the optimizer
+    // rewrites MIN() into a non-nullable literal taken from the file
+    // statistics, while the logical schema keeps MIN() nullable. Strict
+    // clients (e.g. the ADBC Flight SQL driver) reject the DoGet stream
+    // if its schema does not exactly match the one advertised in
+    // FlightInfo.
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "amount",
+        DataType::Int32,
+        false,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![50, 75, 100, 25]))],
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "flight_sql_schema_test_{}.parquet",
+        std::process::id()
+    ));
+    let file = std::fs::File::create(&path).expect("create parquet file");
+    let mut writer = ArrowWriter::try_new(file, schema, None).expect("create writer");
+    writer.write(&batch).expect("write batch");
+    writer.close().expect("close writer");
+
+    let ctx = SessionContext::new();
+    ctx.register_parquet(
+        "orders_pq",
+        path.to_str().expect("utf-8 path"),
+        ParquetReadOptions::default(),
+    )
+    .await
+    .expect("register parquet");
+
+    let addr = "0.0.0.0:50069";
+    start_test_server(addr.to_string(), ctx.state()).await;
+
+    let mut client = create_test_client(&format!("http://{}", addr)).await;
+
+    let flight_info = client
+        .execute(
+            "SELECT MIN(amount) AS lo, COUNT(*) AS n FROM orders_pq".to_string(),
+            None,
+        )
+        .await
+        .expect("Query should succeed");
+
+    let advertised = flight_info
+        .clone()
+        .try_decode_schema()
+        .expect("FlightInfo should carry a schema");
+
+    let ticket = flight_info
+        .endpoint
+        .first()
+        .expect("Should have endpoint")
+        .ticket
+        .clone()
+        .expect("Should have ticket");
+
+    let mut stream = client.do_get(ticket).await.expect("do_get should succeed");
+    while stream
+        .try_next()
+        .await
+        .expect("Stream should work")
+        .is_some()
+    {}
+
+    let actual = stream
+        .schema()
+        .expect("DoGet stream should declare a schema")
+        .clone();
+
+    std::fs::remove_file(&path).ok();
+
+    assert_eq!(
+        advertised,
+        *actual,
+        "DoGet stream schema must match the schema advertised in FlightInfo"
+    );
+}

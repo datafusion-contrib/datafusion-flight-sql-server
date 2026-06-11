@@ -220,8 +220,21 @@ impl ArrowFlightSqlService for FlightSqlService {
             sql::Command::CommandStatementQuery(CommandStatementQuery { query, .. }) => {
                 // print!("Query: {query}\n");
 
-                let stream = ctx.execute_sql(&query).await.map_err(df_error_to_status)?;
-                let arrow_schema = stream.schema();
+                // Declare the logical-plan schema (the same schema that
+                // GetFlightInfo advertises) rather than the physical stream
+                // schema. The two can differ in field nullability (e.g. for
+                // aggregates), and strict clients such as the ADBC Flight SQL
+                // driver reject a DoGet stream whose schema does not match
+                // the advertised FlightInfo schema exactly.
+                let plan = ctx
+                    .sql_to_logical_plan(&query)
+                    .await
+                    .map_err(df_error_to_status)?;
+                let arrow_schema = get_schema_for_plan(&plan, self.config.schema_with_metadata);
+                let stream = ctx
+                    .execute_logical_plan(plan)
+                    .await
+                    .map_err(df_error_to_status)?;
                 let arrow_stream = stream.map(|i| {
                     let batch = i.map_err(|e| FlightError::ExternalError(e.into()))?;
                     Ok(batch)
@@ -253,11 +266,14 @@ impl ArrowFlightSqlService for FlightSqlService {
                         .map_err(df_error_to_status)?;
                 }
 
+                // Same schema consistency requirement as for
+                // CommandStatementQuery above.
+                let arrow_schema =
+                    get_schema_for_plan(&plan, self.config.schema_with_metadata);
                 let stream = ctx
                     .execute_logical_plan(plan)
                     .await
                     .map_err(df_error_to_status)?;
-                let arrow_schema = stream.schema();
                 let arrow_stream = stream.map(|i| {
                     let batch = i.map_err(|e| FlightError::ExternalError(e.into()))?;
                     Ok(batch)
@@ -283,11 +299,14 @@ impl ArrowFlightSqlService for FlightSqlService {
 
                 let plan = parse_substrait_bytes(&ctx, substrait_bytes).await?;
 
+                // Same schema consistency requirement as for
+                // CommandStatementQuery above.
+                let arrow_schema =
+                    get_schema_for_plan(&plan, self.config.schema_with_metadata);
                 let state = ctx.inner.state();
                 let df = DataFrame::new(state, plan);
 
                 let stream = df.execute_stream().await.map_err(df_error_to_status)?;
-                let arrow_schema = stream.schema();
                 let arrow_stream = stream.map(|i| {
                     let batch = i.map_err(|e| FlightError::ExternalError(e.into()))?;
                     Ok(batch)
