@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use arrow_flight::sql::client::FlightSqlServiceClient;
+use arrow_flight::{sql::client::FlightSqlServiceClient, FlightInfo};
 use datafusion::arrow::{
     array::{Int32Array, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
@@ -8,6 +8,8 @@ use datafusion::arrow::{
 use datafusion::{
     datasource::MemTable,
     execution::context::{SessionContext, SessionState},
+    parquet::arrow::ArrowWriter,
+    prelude::ParquetReadOptions,
 };
 use datafusion_flight_sql_server::service::FlightSqlService;
 use futures::TryStreamExt;
@@ -327,19 +329,22 @@ async fn test_query_with_join() {
     assert_eq!(total_rows, 4, "Should have 4 rows from join");
 }
 
-#[tokio::test]
-async fn test_do_get_schema_matches_advertised_flight_info_schema() {
-    use datafusion::parquet::arrow::ArrowWriter;
-    use datafusion::prelude::ParquetReadOptions;
+/// The query used by the schema-consistency tests below.
+///
+/// Aggregates over statistics-backed sources (e.g. Parquet) are a case where
+/// the logical plan schema (advertised in `FlightInfo`) and the physical stream
+/// schema disagree on field nullability: the `AggregateStatistics` optimizer
+/// rewrites `MIN()` into a non-nullable literal taken from the file statistics,
+/// while the logical schema keeps `MIN()` nullable. Strict clients (e.g. the
+/// ADBC Flight SQL driver) reject a `DoGet` stream whose schema does not
+/// exactly match the one advertised in `FlightInfo`.
+const AGGREGATE_OVER_PARQUET: &str = "SELECT MIN(amount) AS lo, COUNT(*) AS n FROM orders_pq";
 
-    // Aggregates over statistics-backed sources (e.g. Parquet) are a case
-    // where the logical plan schema (advertised in FlightInfo) and the
-    // physical stream schema disagree on field nullability: the optimizer
-    // rewrites MIN() into a non-nullable literal taken from the file
-    // statistics, while the logical schema keeps MIN() nullable. Strict
-    // clients (e.g. the ADBC Flight SQL driver) reject the DoGet stream
-    // if its schema does not exactly match the one advertised in
-    // FlightInfo.
+/// Registers a single-column Parquet table named `orders_pq`.
+///
+/// The file lives in the per-test-binary temp directory that Cargo manages, so
+/// a panicking test cannot leave stray files behind in the system temp dir.
+async fn create_parquet_session(file_name: &str) -> SessionState {
     let schema = Arc::new(Schema::new(vec![Field::new(
         "amount",
         DataType::Int32,
@@ -350,10 +355,8 @@ async fn test_do_get_schema_matches_advertised_flight_info_schema() {
         vec![Arc::new(Int32Array::from(vec![50, 75, 100, 25]))],
     )
     .unwrap();
-    let path = std::env::temp_dir().join(format!(
-        "flight_sql_schema_test_{}.parquet",
-        std::process::id()
-    ));
+
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(file_name);
     let file = std::fs::File::create(&path).expect("create parquet file");
     let mut writer = ArrowWriter::try_new(file, schema, None).expect("create writer");
     writer.write(&batch).expect("write batch");
@@ -368,24 +371,15 @@ async fn test_do_get_schema_matches_advertised_flight_info_schema() {
     .await
     .expect("register parquet");
 
-    let addr = "0.0.0.0:50069";
-    start_test_server(addr.to_string(), ctx.state()).await;
+    ctx.state()
+}
 
-    let mut client = create_test_client(&format!("http://{}", addr)).await;
-
-    let flight_info = client
-        .execute(
-            "SELECT MIN(amount) AS lo, COUNT(*) AS n FROM orders_pq".to_string(),
-            None,
-        )
-        .await
-        .expect("Query should succeed");
-
-    let advertised = flight_info
-        .clone()
-        .try_decode_schema()
-        .expect("FlightInfo should carry a schema");
-
+/// Fetches the endpoint's `DoGet` stream, drains it, and returns the schema the
+/// stream declared on the wire.
+async fn do_get_stream_schema(
+    client: &mut FlightSqlServiceClient<Channel>,
+    flight_info: &FlightInfo,
+) -> Schema {
     let ticket = flight_info
         .endpoint
         .first()
@@ -395,6 +389,8 @@ async fn test_do_get_schema_matches_advertised_flight_info_schema() {
         .expect("Should have ticket");
 
     let mut stream = client.do_get(ticket).await.expect("do_get should succeed");
+    // Drain the stream: decoding the batches also validates them against the
+    // declared schema, so a schema that does not fit the data fails here.
     while stream
         .try_next()
         .await
@@ -402,16 +398,75 @@ async fn test_do_get_schema_matches_advertised_flight_info_schema() {
         .is_some()
     {}
 
-    let actual = stream
+    stream
         .schema()
         .expect("DoGet stream should declare a schema")
-        .clone();
+        .as_ref()
+        .clone()
+}
 
-    std::fs::remove_file(&path).ok();
+/// Asserts that `MIN(amount)` is still advertised as nullable, i.e. that the
+/// query really does exercise the logical/physical schema divergence and the
+/// test has not silently become vacuous.
+fn assert_exercises_nullability_divergence(advertised: &Schema) {
+    let lo = advertised.field_with_name("lo").expect("lo field");
+    assert!(
+        lo.is_nullable(),
+        "MIN() must be advertised as nullable for this test to be meaningful, got {lo:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_do_get_schema_matches_advertised_flight_info_schema() {
+    let addr = "0.0.0.0:50069";
+    let state = create_parquet_session("statement_query.parquet").await;
+    start_test_server(addr.to_string(), state).await;
+
+    let mut client = create_test_client(&format!("http://{}", addr)).await;
+
+    let flight_info = client
+        .execute(AGGREGATE_OVER_PARQUET.to_string(), None)
+        .await
+        .expect("Query should succeed");
+
+    let advertised = flight_info
+        .clone()
+        .try_decode_schema()
+        .expect("FlightInfo should carry a schema");
+    assert_exercises_nullability_divergence(&advertised);
+
+    let actual = do_get_stream_schema(&mut client, &flight_info).await;
 
     assert_eq!(
-        advertised,
-        *actual,
+        advertised, actual,
+        "DoGet stream schema must match the schema advertised in FlightInfo"
+    );
+}
+
+#[tokio::test]
+async fn test_prepared_do_get_schema_matches_advertised_flight_info_schema() {
+    let addr = "0.0.0.0:50070";
+    let state = create_parquet_session("prepared_statement_query.parquet").await;
+    start_test_server(addr.to_string(), state).await;
+
+    let mut client = create_test_client(&format!("http://{}", addr)).await;
+
+    let mut prepared = client
+        .prepare(AGGREGATE_OVER_PARQUET.to_string(), None)
+        .await
+        .expect("Prepare should succeed");
+
+    let flight_info = prepared.execute().await.expect("Query should succeed");
+    let advertised = flight_info
+        .clone()
+        .try_decode_schema()
+        .expect("FlightInfo should carry a schema");
+    assert_exercises_nullability_divergence(&advertised);
+
+    let actual = do_get_stream_schema(&mut client, &flight_info).await;
+
+    assert_eq!(
+        advertised, actual,
         "DoGet stream schema must match the schema advertised in FlightInfo"
     );
 }

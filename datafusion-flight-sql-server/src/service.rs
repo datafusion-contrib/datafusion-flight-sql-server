@@ -37,7 +37,6 @@ use datafusion::arrow::{
 };
 use datafusion::{
     common::{arrow::datatypes::Schema, ParamValues},
-    dataframe::DataFrame,
     datasource::TableType,
     error::{DataFusionError, Result as DataFusionResult},
     execution::context::{SQLOptions, SessionContext, SessionState},
@@ -174,11 +173,6 @@ impl FlightSqlSessionContext {
         Ok(plan)
     }
 
-    async fn execute_sql(&self, sql: &str) -> DataFusionResult<SendableRecordBatchStream> {
-        let plan = self.sql_to_logical_plan(sql).await?;
-        self.execute_logical_plan(plan).await
-    }
-
     async fn execute_logical_plan(
         &self,
         plan: LogicalPlan,
@@ -216,76 +210,33 @@ impl ArrowFlightSqlService for FlightSqlService {
         let ticket = CommandTicket::try_decode(request.into_inner().ticket)
             .map_err(flight_error_to_status)?;
 
-        match ticket.command {
-            sql::Command::CommandStatementQuery(CommandStatementQuery { query, .. }) => {
-                // print!("Query: {query}\n");
-
-                // Declare the logical-plan schema (the same schema that
-                // GetFlightInfo advertises) rather than the physical stream
-                // schema. The two can differ in field nullability (e.g. for
-                // aggregates), and strict clients such as the ADBC Flight SQL
-                // driver reject a DoGet stream whose schema does not match
-                // the advertised FlightInfo schema exactly.
-                let plan = ctx
-                    .sql_to_logical_plan(&query)
-                    .await
-                    .map_err(df_error_to_status)?;
-                let arrow_schema = get_schema_for_plan(&plan, self.config.schema_with_metadata);
-                let stream = ctx
-                    .execute_logical_plan(plan)
-                    .await
-                    .map_err(df_error_to_status)?;
-                let arrow_stream = stream.map(|i| {
-                    let batch = i.map_err(|e| FlightError::ExternalError(e.into()))?;
-                    Ok(batch)
-                });
-
-                let flight_data_stream = FlightDataEncoderBuilder::new()
-                    .with_schema(arrow_schema)
-                    .build(arrow_stream)
-                    .map_err(flight_error_to_status)
-                    .boxed();
-
-                Ok(Response::new(flight_data_stream))
-            }
+        // All query arms declare the logical plan schema (the very same schema
+        // that the matching `get_flight_info_*` advertises) rather than the
+        // physical stream schema. The two can differ in field nullability
+        // (e.g. aggregates over statistics-backed sources), and strict clients
+        // such as the ADBC Flight SQL driver reject a DoGet stream whose schema
+        // does not match the advertised FlightInfo schema exactly.
+        let plan = match ticket.command {
+            sql::Command::CommandStatementQuery(CommandStatementQuery { query, .. }) => ctx
+                .sql_to_logical_plan(&query)
+                .await
+                .map_err(df_error_to_status)?,
             sql::Command::CommandPreparedStatementQuery(CommandPreparedStatementQuery {
                 prepared_statement_handle,
             }) => {
                 let handle = QueryHandle::try_decode(prepared_statement_handle)?;
 
-                let mut plan = ctx
+                let plan = ctx
                     .sql_to_logical_plan(handle.query())
                     .await
                     .map_err(df_error_to_status)?;
 
-                if let Some(param_values) =
-                    decode_param_values(handle.parameters()).map_err(arrow_error_to_status)?
-                {
-                    plan = plan
+                match decode_param_values(handle.parameters()).map_err(arrow_error_to_status)? {
+                    Some(param_values) => plan
                         .with_param_values(param_values)
-                        .map_err(df_error_to_status)?;
+                        .map_err(df_error_to_status)?,
+                    None => plan,
                 }
-
-                // Same schema consistency requirement as for
-                // CommandStatementQuery above.
-                let arrow_schema =
-                    get_schema_for_plan(&plan, self.config.schema_with_metadata);
-                let stream = ctx
-                    .execute_logical_plan(plan)
-                    .await
-                    .map_err(df_error_to_status)?;
-                let arrow_stream = stream.map(|i| {
-                    let batch = i.map_err(|e| FlightError::ExternalError(e.into()))?;
-                    Ok(batch)
-                });
-
-                let flight_data_stream = FlightDataEncoderBuilder::new()
-                    .with_schema(arrow_schema)
-                    .build(arrow_stream)
-                    .map_err(flight_error_to_status)
-                    .boxed();
-
-                Ok(Response::new(flight_data_stream))
             }
             sql::Command::CommandStatementSubstraitPlan(CommandStatementSubstraitPlan {
                 plan,
@@ -297,28 +248,7 @@ impl ArrowFlightSqlService for FlightSqlService {
                     ))?
                     .plan;
 
-                let plan = parse_substrait_bytes(&ctx, substrait_bytes).await?;
-
-                // Same schema consistency requirement as for
-                // CommandStatementQuery above.
-                let arrow_schema =
-                    get_schema_for_plan(&plan, self.config.schema_with_metadata);
-                let state = ctx.inner.state();
-                let df = DataFrame::new(state, plan);
-
-                let stream = df.execute_stream().await.map_err(df_error_to_status)?;
-                let arrow_stream = stream.map(|i| {
-                    let batch = i.map_err(|e| FlightError::ExternalError(e.into()))?;
-                    Ok(batch)
-                });
-
-                let flight_data_stream = FlightDataEncoderBuilder::new()
-                    .with_schema(arrow_schema)
-                    .build(arrow_stream)
-                    .map_err(flight_error_to_status)
-                    .boxed();
-
-                Ok(Response::new(flight_data_stream))
+                parse_substrait_bytes(&ctx, substrait_bytes).await?
             }
             _ => {
                 return Err(Status::internal(format!(
@@ -326,7 +256,23 @@ impl ArrowFlightSqlService for FlightSqlService {
                     ticket.command
                 )));
             }
-        }
+        };
+
+        let arrow_schema = get_schema_for_plan(&plan, self.config.schema_with_metadata);
+        let stream = ctx
+            .execute_logical_plan(plan)
+            .await
+            .map_err(df_error_to_status)?;
+
+        let arrow_stream = stream.map_err(|e| FlightError::ExternalError(e.into()));
+
+        let flight_data_stream = FlightDataEncoderBuilder::new()
+            .with_schema(arrow_schema)
+            .build(arrow_stream)
+            .map_err(flight_error_to_status)
+            .boxed();
+
+        Ok(Response::new(flight_data_stream))
     }
 
     async fn get_flight_info_statement(
