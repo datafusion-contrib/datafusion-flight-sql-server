@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.18](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.17...v0.4.18) - 2026-07-29
+
+### Fixed
+
+- declare the logical plan schema in DoGet to match GetFlightInfo
+
+### Other
+
+- Merge pull request #52 from jonasdedden/fix-doget-schema-mismatch
+- hoist shared DoGet stream construction out of the match arms
+
 ## [0.4.17](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.16...v0.4.17) - 2026-07-02
 
 ### Other
