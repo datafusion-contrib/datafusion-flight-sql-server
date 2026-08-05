@@ -53,7 +53,11 @@ use log::info;
 use once_cell::sync::Lazy;
 use prost::bytes::Bytes;
 use prost::Message;
-use tonic::transport::Server;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tonic::transport::{
+    server::{Connected, TcpIncoming},
+    Server,
+};
 use tonic::{Request, Response, Status, Streaming};
 
 use super::config::FlightSqlServiceConfig;
@@ -120,12 +124,25 @@ impl FlightSqlService {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("Listening on {}", listener.local_addr()?);
 
-        let svc = FlightServiceServer::new(self);
         let listener = tokio::net::TcpListener::from_std(listener)?;
+        let incoming = TcpIncoming::from(listener).with_nodelay(Some(true));
 
+        self.serve_with_incoming(incoming).await
+    }
+
+    pub async fn serve_with_incoming<I, IO, IE>(
+        self,
+        incoming: I,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        I: Stream<Item = std::result::Result<IO, IE>>,
+        IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
+        IE: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let svc = FlightServiceServer::new(self);
         Ok(Server::builder()
             .add_service(svc)
-            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .serve_with_incoming(incoming)
             .await?)
     }
 
