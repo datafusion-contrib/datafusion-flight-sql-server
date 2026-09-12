@@ -17,7 +17,6 @@ protoc = ["datafusion-substrait/protoc"]
 
 [dependencies]
 arrow-flight.workspace = true
-datafusion-federation = { workspace = true, features = ["sql"] }
 datafusion-substrait.workspace = true
 datafusion.workspace = true
 futures.workspace = true
@@ -29,6 +28,7 @@ async-trait.workspace = true
 tokio = { version = "1.47", features = ["net"], default-features = false }
 
 [dev-dependencies]
+datafusion-federation = { workspace = true, features = ["sql"] }
 tokio.workspace = true
 datafusion-flight-sql-table-provider = { path = "../datafusion-flight-sql-table-provider" }
 tonic-async-interceptor = "0.14"
