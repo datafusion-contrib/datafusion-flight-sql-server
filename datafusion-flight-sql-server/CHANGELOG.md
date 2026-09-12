@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.19](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.18...v0.4.19) - 2026-09-12
+
+### Other
+
+- Update to DataFusion 55 / arrow-flight 59
+- Move datafusion-federation to dev-dependencies
+
 ## [0.4.18](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.17...v0.4.18) - 2026-08-05
 
 ### Fixed
