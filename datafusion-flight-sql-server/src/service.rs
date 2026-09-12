@@ -1001,9 +1001,7 @@ async fn parse_substrait_bytes(
     ctx: &FlightSqlSessionContext,
     substrait: &Bytes,
 ) -> Result<LogicalPlan> {
-    let substrait_plan = deserialize_bytes(substrait.to_vec())
-        .await
-        .map_err(df_error_to_status)?;
+    let substrait_plan = deserialize_bytes(substrait).map_err(df_error_to_status)?;
 
     from_substrait_plan(&ctx.inner.state(), &substrait_plan)
         .await
