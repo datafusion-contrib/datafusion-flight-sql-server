@@ -1142,7 +1142,7 @@ dependencies = [
 
 [[package]]
 name = "datafusion-flight-sql-server"
-version = "0.4.19"
+version = "0.4.20"
 dependencies = [
  "arrow-flight",
  "async-trait",
@@ -1161,7 +1161,7 @@ dependencies = [
 
 [[package]]
 name = "datafusion-flight-sql-table-provider"
-version = "0.4.19"
+version = "0.4.20"
 dependencies = [
  "arrow-flight",
  "async-trait",
