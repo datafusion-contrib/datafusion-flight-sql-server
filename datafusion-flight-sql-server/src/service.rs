@@ -26,7 +26,7 @@ use arrow_flight::{
     IpcMessage, SchemaAsIpc, Ticket,
 };
 use datafusion::arrow::{
-    array::{ArrayRef, RecordBatch, StringArray},
+    array::{ArrayRef, RecordBatch, RecordBatchOptions, StringArray},
     compute::concat_batches,
     datatypes::{DataType, Field, SchemaBuilder, SchemaRef},
     error::ArrowError,
@@ -275,13 +275,27 @@ impl ArrowFlightSqlService for FlightSqlService {
             }
         };
 
-        let arrow_schema = get_schema_for_plan(&plan, self.config.schema_with_metadata);
+        let arrow_schema = arrow_schema_for_plan(&plan, self.config.schema_with_metadata);
         let stream = ctx
             .execute_logical_plan(plan)
             .await
             .map_err(df_error_to_status)?;
 
-        let arrow_stream = stream.map_err(|e| FlightError::ExternalError(e.into()));
+        // The encoder requires every batch to carry exactly the declared
+        // schema, so rebind the physical batches to the logical schema.
+        let batch_schema = arrow_schema.clone();
+        let arrow_stream = stream
+            .map_err(|e| FlightError::ExternalError(e.into()))
+            .and_then(move |batch| {
+                let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
+                let batch = RecordBatch::try_new_with_options(
+                    batch_schema.clone(),
+                    batch.columns().to_vec(),
+                    &options,
+                )
+                .map_err(FlightError::Arrow);
+                futures::future::ready(batch)
+            });
 
         let flight_data_stream = FlightDataEncoderBuilder::new()
             .with_schema(arrow_schema)
@@ -1020,9 +1034,26 @@ fn encode_schema(schema: &Schema) -> std::result::Result<Bytes, ArrowError> {
     Ok(schema)
 }
 
-/// Return the schema for the specified logical plan
+/// Return the encoded flight schema for the specified logical plan
 fn get_schema_for_plan(logical_plan: &LogicalPlan, with_metadata: bool) -> SchemaRef {
-    let schema: SchemaRef = if with_metadata {
+    let schema = arrow_schema_for_plan(logical_plan, with_metadata);
+
+    // Use an empty FlightDataEncoder to determine the schema of the encoded flight data.
+    // This is necessary as the schema can change based on dictionary hydration behavior.
+    let flight_data_stream = FlightDataEncoderBuilder::new()
+        // Inform the builder of the input stream schema
+        .with_schema(schema)
+        .build(futures::stream::iter([]));
+
+    // Retrieve the schema of the encoded data
+    flight_data_stream
+        .known_schema()
+        .expect("flight data schema should be known when explicitly provided via `with_schema`")
+}
+
+/// Return the arrow schema (before flight encoding) for the specified logical plan
+fn arrow_schema_for_plan(logical_plan: &LogicalPlan, with_metadata: bool) -> SchemaRef {
+    if with_metadata {
         // Get the DFSchema which contains table qualifiers
         let df_schema = logical_plan.schema();
 
@@ -1047,19 +1078,7 @@ fn get_schema_for_plan(logical_plan: &LogicalPlan, with_metadata: bool) -> Schem
         ))
     } else {
         Arc::new(logical_plan.schema().as_arrow().clone())
-    };
-
-    // Use an empty FlightDataEncoder to determine the schema of the encoded flight data.
-    // This is necessary as the schema can change based on dictionary hydration behavior.
-    let flight_data_stream = FlightDataEncoderBuilder::new()
-        // Inform the builder of the input stream schema
-        .with_schema(schema)
-        .build(futures::stream::iter([]));
-
-    // Retrieve the schema of the encoded data
-    flight_data_stream
-        .known_schema()
-        .expect("flight data schema should be known when explicitly provided via `with_schema`")
+    }
 }
 
 fn parameter_schema_for_plan(plan: &LogicalPlan) -> Result<SchemaRef, Box<Status>> {
