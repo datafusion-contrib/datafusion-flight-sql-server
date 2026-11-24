@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.20](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.19...v0.4.20) - 2026-11-24
+
+### Other
+
+- Rebind DoGet batches to the advertised schema
+
 ## [0.4.19](https://github.com/datafusion-contrib/datafusion-flight-sql-server/compare/v0.4.18...v0.4.19) - 2026-09-12
 
 ### Other
